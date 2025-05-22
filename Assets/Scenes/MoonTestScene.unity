@@ -384,6 +384,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   playerTransform: {fileID: 1588410564}
+  smoothSpeed: 5
   offset: {x: -4, y: 10, z: -15}
 --- !u!1 &410087039
 GameObject:
@@ -978,7 +979,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   cameraTransform: {fileID: 330585546}
   groundCheck: {fileID: 1348144330}
-  speed: 6
+  speed: 10
   groundDistance: 0.2
   jumpForce: 7
   fallMultiplier: 2.5

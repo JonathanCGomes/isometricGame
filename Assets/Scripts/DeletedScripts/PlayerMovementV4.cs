@@ -1,4 +1,3 @@
-// PlayerMovementV4 atualizado
 using UnityEngine;
 using UnityEngine.InputSystem;
 using System.Collections;
@@ -26,13 +25,15 @@ public class PlayerMovementV4 : MonoBehaviour
 
     [Header("Ground Check")]
     [SerializeField] private Transform groundCheck;
-    [SerializeField] private float groundDistance = 0.4f;
     [SerializeField] private LayerMask groundMask;
 
     [Header("Input")]
     [SerializeField] private InputActionReference moveAction;
     [SerializeField] private InputActionReference jumpAction;
     [SerializeField] private InputActionReference dashAction;
+    [SerializeField] private InputActionReference lockOnAction;
+
+
 
     private Vector2 input;
     private Vector3 velocity;
@@ -86,6 +87,7 @@ public class PlayerMovementV4 : MonoBehaviour
     private void HandleInput()
     {
         input = moveAction.action.ReadValue<Vector2>();
+
     }
 
     private void OnJump(InputAction.CallbackContext context)
@@ -190,4 +192,5 @@ public class PlayerMovementV4 : MonoBehaviour
         yield return new WaitForSeconds(dashCooldown);
         dashStates[dashIndex] = DashState.Ready;
     }
+
 }

@@ -1,117 +1,263 @@
-using Unity.VisualScripting;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 
 public class PlayerMovement : MonoBehaviour
 {
-    // Referencias
-    Rigidbody rb;
-    public Transform cameraTransform;
-    public Transform groundCheck;
+    [Header("References")]
+    [SerializeField] private CharacterController controller;
+    [SerializeField] private Transform cameraTransform;
 
-    // Variaveis de configuracao
-    [SerializeField] float speed = 10f;
-    [SerializeField] float groundDistance = 0.3f;
-    [SerializeField] float jumpForce = 5f;
-    [SerializeField] float fallMultiplier = 2.5f;
-    [SerializeField] float lowJumpMultiplier = 2f;
-    [SerializeField] float jumpBufferTime = 0.1f;
-    private float jumpBufferTimer;
+    [Header("Input")]
+    [SerializeField] private InputActionReference moveAction;
+    [SerializeField] private InputActionReference jumpAction;
+    [SerializeField] private InputActionReference dashAction;
+    [SerializeField] private InputActionReference lockOnAction;
+    [SerializeField] private InputActionReference switchTargetLeftAction;
+    [SerializeField] private InputActionReference switchTargetRightAction;
+    [SerializeField] private InputActionReference lookAction;
+
+    [Header("Movement")]
+    [SerializeField] private float moveSpeed = 6f;
+    [SerializeField] private float rotationSpeed = 10f;
+
+    [Header("Jump")]
+    [SerializeField] private float jumpHeight = 3f;
+    [SerializeField] private float gravity = -9.81f;
     [SerializeField] private float coyoteTime = 0.2f;
+    [SerializeField] private float jumpBufferTime = 0.2f;
+
+    [Header("Dash")]
+    [SerializeField] private float dashSpeed = 20f;
+    [SerializeField] private float dashDuration = 0.2f;
+    [SerializeField] private float dashCooldown = 1f;
+    [SerializeField] private int maxDashCharges = 2;
+
+    [Header("Lock On")]
+    [SerializeField] private float lockOnRadius = 15f;
+    [SerializeField] private LayerMask enemyLayer;
+
+    // Movement
+    private Vector2 input;
+    private Vector3 velocity;
+    private bool isGrounded;
     private float coyoteTimeCounter;
+    private float jumpBufferCounter;
 
-    // Variaveis de estado
-    private Vector2 inputMove;
-    Vector3 finalDirection;
-    bool isGrounded;
-    bool wantsToJump;
+    // Dash
+    private enum DashState { Ready, Cooldown }
+    private List<DashState> dashStates;
+    private bool isDashing;
+    private Vector3 dashDirection;
 
-    void Awake()
+    // Lock-On
+    private bool isLockOnActive = false;
+    private Transform currentTarget;
+    private List<Transform> targetsInRange = new List<Transform>();
+    private int currentTargetIndex = 0;
+
+    private void Start()
     {
-        // Obtem o componente Rigidbody
-        rb = GetComponent<Rigidbody>();
-    }
-
-    // Captura do movimento do jogador
-    public void OnMove(InputAction.CallbackContext context)
-    {
-        inputMove = context.ReadValue<Vector2>();
-        Vector3 camForward = cameraTransform.forward;
-        camForward.y = 0;
-        camForward.Normalize();
-
-        Vector3 camRight = cameraTransform.right;
-        camRight.y = 0;
-        camRight.Normalize();
-
-        Vector3 moveDirection = camForward * inputMove.y + camRight * inputMove.x;
-        finalDirection = moveDirection.normalized;
-    }
-
-    // Captura do comando de pulo
-    public void OnJump(InputAction.CallbackContext context)
-    {
-        if (context.performed)
+        dashStates = new List<DashState>();
+        for (int i = 0; i < maxDashCharges; i++)
         {
-            wantsToJump = true;
-            jumpBufferTimer = jumpBufferTime;
+            dashStates.Add(DashState.Ready);
         }
     }
 
-    void FixedUpdate()
+    private void Update()
     {
-        if (cameraTransform == null) return;
+        HandleInput();
+        CheckGrounded();
 
-        // Movimentacao do jogador
-        rb.linearVelocity = new Vector3(finalDirection.x * speed, rb.linearVelocity.y, finalDirection.z * speed);
-
-        // Aplicação da fisica de queda
-        if (rb.linearVelocity.y < 0)
+        if (!isDashing)
         {
-            rb.linearVelocity += Vector3.up * Physics.gravity.y * (fallMultiplier - 1) * Time.fixedDeltaTime;
-        }
-        else if (rb.linearVelocity.y > 0 && !wantsToJump)
-        {
-            rb.linearVelocity += Vector3.up * Physics.gravity.y * (lowJumpMultiplier - 1) * Time.fixedDeltaTime;
+            HandleMovement();
         }
 
-        // Verificacao se esta no chao com Raycast
-        bool raycastHitGrounded = Physics.Raycast(groundCheck.position, Vector3.down, groundDistance);
-        isGrounded = raycastHitGrounded && rb.linearVelocity.y <= 0f;
+        HandleJump();
+        HandleDash();
+        HandleLockOn();
+        HandleSwitchTarget();
+    }
 
-        // Controle do Coyote Time
-        if (isGrounded)
+    private void HandleInput()
+    {
+        input = moveAction.action.ReadValue<Vector2>();
+    }
+
+    private void CheckGrounded()
+    {
+        isGrounded = controller.isGrounded;
+
+        if (isGrounded && velocity.y < 0)
         {
+            velocity.y = -2f;
             coyoteTimeCounter = coyoteTime;
         }
         else
         {
-            coyoteTimeCounter -= Time.fixedDeltaTime;
+            coyoteTimeCounter -= Time.deltaTime;
         }
+    }
 
-        // Logica de pulo
-        if ((coyoteTimeCounter > 0f || isGrounded) && wantsToJump)
-        {
-            rb.linearVelocity = new Vector3(rb.linearVelocity.x, jumpForce, rb.linearVelocity.z);
-            wantsToJump = false;
-            isGrounded = false;
-        }
+    private void HandleMovement()
+    {
+        Vector3 move = new Vector3(input.x, 0f, input.y);
 
-        // Buffer de pulo para capturar o comando pouco antes de tocar o chao
-        if (wantsToJump)
+        if (move.magnitude >= 0.1f)
         {
-            jumpBufferTimer -= Time.fixedDeltaTime;
-            if (jumpBufferTimer <= 0)
+            Vector3 moveDirection = Quaternion.Euler(0f, cameraTransform.eulerAngles.y, 0f) * move;
+            moveDirection.Normalize();
+
+            if (isLockOnActive && currentTarget != null)
             {
-                wantsToJump = false;
+                // Apenas rotaciona mirando no alvo
+                RotateTowards(currentTarget.position);
+            }
+            else
+            {
+                // Mira livre com Look Stick
+                Vector2 lookInput = lookAction.action.ReadValue<Vector2>();
+                if (lookInput.magnitude > 0.1f)
+                {
+                    Vector3 lookDirection = new Vector3(lookInput.x, 0f, lookInput.y);
+                    lookDirection = Quaternion.Euler(0f, cameraTransform.eulerAngles.y, 0f) * lookDirection;
+                    RotateTowards(transform.position + lookDirection);
+                }
+                else
+                {
+                    RotateTowards(transform.position + moveDirection);
+                }
+            }
+
+            controller.Move(moveDirection * moveSpeed * Time.deltaTime);
+
+        }
+
+        velocity.y += gravity * Time.deltaTime;
+        controller.Move(velocity * Time.deltaTime);
+    }
+
+    private void HandleJump()
+    {
+        if (jumpAction.action.triggered)
+        {
+            jumpBufferCounter = jumpBufferTime;
+        }
+        else
+        {
+            jumpBufferCounter -= Time.deltaTime;
+        }
+
+        if (jumpBufferCounter > 0f && coyoteTimeCounter > 0f)
+        {
+            velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+            jumpBufferCounter = 0f;
+        }
+    }
+
+    private void HandleDash()
+    {
+        if (dashAction.action.triggered)
+        {
+            Vector3 moveInput = new Vector3(input.x, 0f, input.y);
+
+            if (moveInput.magnitude < 0.1f && !isLockOnActive)
+            {
+                return; // Nao permite dash sem direcao se nao estiver em lock-on
+            }
+
+            for (int i = 0; i < dashStates.Count; i++)
+            {
+                if (dashStates[i] == DashState.Ready)
+                {
+                    dashDirection = (Quaternion.Euler(0f, cameraTransform.eulerAngles.y, 0f) * moveInput.normalized);
+                    StartCoroutine(PerformDash(i));
+                    dashStates[i] = DashState.Cooldown;
+                    break;
+                }
             }
         }
     }
 
-    // Define a camera do jogador
-    public void SetCamera(Transform cam)
+    private IEnumerator PerformDash(int dashIndex)
     {
-        cameraTransform = cam;
+        isDashing = true;
+        float startTime = Time.time;
+
+        while (Time.time < startTime + dashDuration)
+        {
+            controller.Move(dashDirection * dashSpeed * Time.deltaTime);
+            yield return null;
+        }
+
+        isDashing = false;
+        yield return new WaitForSeconds(dashCooldown);
+        dashStates[dashIndex] = DashState.Ready;
+    }
+
+    private void HandleLockOn()
+    {
+        if (lockOnAction.action.triggered)
+        {
+            if (isLockOnActive)
+            {
+                isLockOnActive = false;
+                currentTarget = null;
+            }
+            else
+            {
+                Collider[] hits = Physics.OverlapSphere(transform.position, lockOnRadius, enemyLayer);
+                if (hits.Length > 0)
+                {
+                    targetsInRange.Clear();
+                    foreach (Collider hit in hits)
+                    {
+                        targetsInRange.Add(hit.transform);
+                    }
+                    targetsInRange.Sort((a, b) => Vector3.Distance(transform.position, a.position).CompareTo(Vector3.Distance(transform.position, b.position)));
+                    currentTargetIndex = 0;
+                    currentTarget = targetsInRange[currentTargetIndex];
+                    isLockOnActive = true;
+                }
+            }
+        }
+    }
+
+    private void HandleSwitchTarget()
+    {
+        if (!isLockOnActive || targetsInRange.Count == 0)
+            return;
+
+        if (switchTargetRightAction.action.triggered)
+        {
+            currentTargetIndex = (currentTargetIndex + 1) % targetsInRange.Count;
+            currentTarget = targetsInRange[currentTargetIndex];
+        }
+
+        if (switchTargetLeftAction.action.triggered)
+        {
+            currentTargetIndex--;
+            if (currentTargetIndex < 0) currentTargetIndex = targetsInRange.Count - 1;
+            currentTarget = targetsInRange[currentTargetIndex];
+        }
+    }
+
+    private void RotateTowards(Vector3 targetPosition)
+    {
+        Vector3 direction = (targetPosition - transform.position).normalized;
+        direction.y = 0f;
+        if (direction == Vector3.zero) return;
+
+        Quaternion toRotation = Quaternion.LookRotation(direction);
+        transform.rotation = Quaternion.Slerp(transform.rotation, toRotation, rotationSpeed * Time.deltaTime);
+    }
+
+    private void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireSphere(transform.position, lockOnRadius);
     }
 }
